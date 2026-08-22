@@ -1,0 +1,6 @@
+{
+  "last_checked": null,
+  "portal": null,
+  "applications": [],
+  "note": "Placeholder — populated by the every-2-days scheduled B2B portal check once portal login details are wired up. Until then the dashboard should show this as 'not yet checked' rather than empty/zero."
+}
