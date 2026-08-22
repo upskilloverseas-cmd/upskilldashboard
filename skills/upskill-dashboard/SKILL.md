@@ -46,7 +46,12 @@ WHERE Call_Start_Time >= '<today 00:00, org timezone>'
 ORDER BY Call_Start_Time desc
 ```
 
-> **Verified quirk — no per-person breakdown from Zoho.** This org has exactly one Zoho CRM user (the shared admin login, `Upskill Overseas` / `aayushhishah@upskilloverseas.in` — confirmed via `getUsers`). Every Lead/Task/Call/Deal shows that same single `Owner`, and COQL returns `Owner.name` as `null` regardless. Harsh and Krisha are **not** distinguishable in Zoho data at all — there is no Owner-based split to compute. Don't attempt one; the "Ops data outside Zoho" step below is where the Harsh/Krisha split actually comes from, for the *entire* ops panel, not just the part that's "outside Zoho."
+> **Verified quirk — `Owner` doesn't split by person, but Lead `Tag` does.** This org has exactly one Zoho CRM user (the shared admin login, `Upskill Overseas` / `aayushhishah@upskilloverseas.in` — confirmed via `getUsers`), so every Lead/Task/Call/Deal shows the same single `Owner` and COQL returns `Owner.name` as `null` regardless — don't use Owner for a per-person split. **Tasks and Calls have no Tag data either** (confirmed empty on both modules). But **Leads carry a real `Tag` field**, and `getTags` on the Leads module confirms live, populated tags per counselor: `HarshSIR` (294 leads), `krisha` (169 leads), plus `Hemangi` (402) and `Bhoomi` (371) — two more names that show up tagged but haven't been confirmed as team members to include; ask Bansal once rather than assuming. COQL filters on it directly: `WHERE Tag = 'HarshSIR'` / `WHERE Tag = 'krisha'` (lowercase, exactly as stored) works and can be combined with a `Modified_Time` window, e.g. leads *touched* today by each person:
+```sql
+SELECT COUNT(id) FROM Leads WHERE Modified_Time >= '<today 00:00, org timezone>' AND Tag = 'HarshSIR'
+SELECT COUNT(id) FROM Leads WHERE Modified_Time >= '<today 00:00, org timezone>' AND Tag = 'krisha'
+```
+This is a real Harsh/Krisha split, sourced from Zoho — use it as the base for the ops-by-person panel. It only covers Leads, though, so it's "leads each person touched today," not tasks or calls done — that part still isn't in Zoho (see the next step).
 
 **Deal/pipeline snapshot** (COQL has no `NOT IN` — use two `!=` clauses):
 ```sql
@@ -81,9 +86,9 @@ On a dashboard run in *this* environment:
 - Show its `last_checked` timestamp prominently next to the panel — if it's stale (no update in the last ~4 days), flag that visibly rather than presenting it as current, and remind Bansal it's due for a manual check.
 - Do **not** attempt a browser login here — this session doesn't have the tools for it.
 
-### 5. Ops data outside Zoho — this is also where the Harsh/Krisha split comes from
+### 5. Ops data outside Zoho — tasks/calls still need Bansal's input
 
-Zoho has no per-user Owner data (see the quirk above) and some of what Harsh/Krisha handle for "processing" isn't in Zoho at all. So ask Bansal conversationally at the start of the run ("what's the Harsh/Krisha split today, and anything on the processing side outside Zoho I should fold in?") rather than presenting the Zoho-only tasks/calls totals as if they were already broken down by person. If he has nothing to add, show the Zoho numbers as org-wide totals rather than guessing a split.
+The Lead `Tag` split above covers leads touched per person, but Tasks and Calls have no Tag data and Owner is useless (see above), so there's still no Zoho-native way to attribute today's tasks/calls, or any "processing" work, to Harsh vs Krisha specifically. Ask Bansal conversationally at the start of the run ("what's the task/call split between Harsh and Krisha today, and anything on the processing side outside Zoho I should fold in?") rather than presenting the Zoho-only tasks/calls totals as already broken down by person. If he has nothing to add, show the Zoho numbers as org-wide totals rather than guessing a split.
 
 ### 6. Render the dashboard
 
@@ -91,7 +96,7 @@ Follow the `dataviz` and `artifact-design` skills for the visual pass. Publish a
 - Stat tiles: leads today, tasks due today, calls today, unread emails
 - Marketing panel: spend, cost-per-lead, leads by platform (Facebook vs Google Ads), 7-day and 30-day toggle
 - Lead-source breakdown for today's leads
-- Ops-by-owner panel: Harsh vs Krisha, sourced from what Bansal gives conversationally in step 5 (Zoho itself can't split this) — org-wide Zoho totals shown alongside as context
+- Ops-by-owner panel: Harsh vs Krisha leads touched today from the Lead `Tag` split (step 1), plus tasks/calls split from what Bansal gives conversationally in step 5 — org-wide Zoho task/call totals shown alongside as context
 - Deal pipeline funnel (stage counts)
 - Active Applications panel: cached B2B status + last-checked timestamp
 
