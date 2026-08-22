@@ -10,7 +10,7 @@ A repeatable, on-demand workflow that pulls live data from Zoho CRM, Windsor.ai,
 ## When to use this
 
 - Bansal says "run the dashboard", "show me the dashboard", or "give me the overview"
-- Asked for today's snapshot: leads today, tasks due today, calls made today, who's doing what (Harsh/Krisha)
+- Asked for today's snapshot: leads today, follow-ups due today, calls made today, who's doing what (Harsh/Krisha) — and the rolling 120-day view behind those numbers
 - Asked how marketing/ads are performing (spend, cost per lead)
 - Asked about active B2B application status
 
@@ -20,38 +20,41 @@ Not for a single-campaign deep audit (Australia batch, Dubai batch, etc.) — th
 
 ### 1. Zoho CRM — leads, tasks, calls, deals
 
-Use `Zoho CRM:executeCOQLQuery` for each of the following. Field names below are confirmed against this org's actual module schema (via `getFields`) — do not guess alternate casings.
+Use `Zoho CRM:executeCOQLQuery` for each of the following. Field names below are confirmed against this org's actual module schema (via `getFields`) — do not guess alternate casings. **The standard analysis window is a rolling 120 days** (Bansal wants this tracked "at any point of time" — i.e. whatever day the dashboard runs, look back 120 days from there), alongside same-day counts for the stat tiles.
 
-**Leads created/modified today**, bucketed by source:
+**Leads — today's count and the 120-day window**, bucketed by source:
 ```sql
+SELECT COUNT(id) FROM Leads WHERE Created_Time >= '<today 00:00, org timezone>'
 SELECT id, First_Name, Last_Name, Phone, Lead_Source, Lead_Status, Owner, Created_Time, Modified_Time
 FROM Leads
-WHERE Created_Time >= '<today 00:00, org timezone>'
+WHERE Created_Time >= '<120 days ago 00:00, org timezone>'
 ORDER BY Created_Time desc
 ```
 (Note the `Next_Call_date` field from the lead-audit skill is lowercase "d" if you need to reference it here too.)
 
-**Tasks due today**:
+**"Tasks due today" — verified quirk: the Zoho Tasks module is not what this business actually uses.** It has exactly one record in the entire org, ever (a single "Follow-up for Ielts" task from Jan 2025, still Not Started) — confirmed via `SELECT COUNT(id) FROM Tasks WHERE Status != 'Completed'` (=1) and a full dump. Don't query it for "today's tasks" — it will always read as ~0 and that's misleading, not accurate. What this team actually tracks as a to-do is a **Lead's `Next_Call_date`** (same field the lead-audit skill uses, lowercase "d"):
 ```sql
-SELECT id, Subject, Due_Date, Status, Priority, Owner, What_Id, Who_Id
-FROM Tasks
-WHERE Due_Date = '<today, org timezone>' AND Status != 'Completed'
+SELECT COUNT(id) FROM Leads WHERE Next_Call_date = '<today, org timezone>'
+SELECT id, First_Name, Last_Name, Lead_Status, Next_Call_date, Tag FROM Leads WHERE Next_Call_date = '<today, org timezone>'
+```
+This is the real "tasks due today" — treat it as such in the dashboard, not the empty Tasks module. Also worth surfacing: leads whose `Next_Call_date` is already in the *past* (overdue follow-ups) — `SELECT COUNT(id) FROM Leads WHERE Next_Call_date < '<today>'` returns a raw count (384 as of this writing) that is **not yet filtered by status** — see the COQL quirk just below before narrowing it to open/active leads only, since a naive 3-condition filter will error.
+
+> **Verified quirk — COQL via this tool caps out past 2 chained `AND` conditions.** Confirmed repeatedly: two conditions in a `WHERE` (any field combination) work fine; a third `AND`, regardless of which fields or operators, returns a `SYNTAX_ERROR`. So a filter like "Next_Call_date < today AND Lead_Status != 'Not Interested' AND Lead_Status != 'Lost Lead'" cannot be one query. Split it: run the 2-condition version (date + one status exclusion), or fetch the date-filtered set with `Lead_Status` in the select list and exclude closed statuses client-side after paginating through results — don't drop a status filter silently just to dodge the error.
+
+**Calls — today's count and the 120-day count**:
+```sql
+SELECT COUNT(id) FROM Calls WHERE Call_Start_Time >= '<today 00:00, org timezone>'
+SELECT COUNT(id) FROM Calls WHERE Call_Start_Time >= '<120 days ago 00:00, org timezone>'
 ```
 
-**Calls logged today**:
-```sql
-SELECT id, Subject, Call_Start_Time, Call_Duration, Call_Type, Call_Purpose, Call_Result, Owner, What_Id, Who_Id
-FROM Calls
-WHERE Call_Start_Time >= '<today 00:00, org timezone>'
-ORDER BY Call_Start_Time desc
-```
-
-> **Verified quirk — `Owner` doesn't split by person, but Lead `Tag` does.** This org has exactly one Zoho CRM user (the shared admin login, `Upskill Overseas` / `aayushhishah@upskilloverseas.in` — confirmed via `getUsers`), so every Lead/Task/Call/Deal shows the same single `Owner` and COQL returns `Owner.name` as `null` regardless — don't use Owner for a per-person split. **Tasks and Calls have no Tag data either** (confirmed empty on both modules). But **Leads carry a real `Tag` field**, and `getTags` on the Leads module confirms live, populated tags per counselor: `HarshSIR` (294 leads), `krisha` (169 leads), plus `Hemangi` (402) and `Bhoomi` (371) — two more names that show up tagged but haven't been confirmed as team members to include; ask Bansal once rather than assuming. COQL filters on it directly: `WHERE Tag = 'HarshSIR'` / `WHERE Tag = 'krisha'` (lowercase, exactly as stored) works and can be combined with a `Modified_Time` window, e.g. leads *touched* today by each person:
+> **Verified quirk — `Owner` doesn't split by person, but Lead `Tag` does.** This org has exactly one Zoho CRM user (the shared admin login, `Upskill Overseas` / `aayushhishah@upskilloverseas.in` — confirmed via `getUsers`), so every Lead/Task/Call/Deal shows the same single `Owner` and COQL returns `Owner.name` as `null` regardless — don't use Owner for a per-person split. **Tasks and Calls have no Tag data either** (confirmed empty on both modules). But **Leads carry a real `Tag` field**, and `getTags` on the Leads module confirms live, populated tags per counselor: `HarshSIR` and `krisha` (lowercase, exactly as stored). `getTags` also showed `Hemangi` and `Bhoomi` tags with a large associated-record count each — **confirmed by Bansal these two are no longer on the team, so exclude them from the ops-by-person panel entirely**, even though the historical tag data still exists on old leads. COQL filters directly on Tag and combines with a time window, e.g. leads *touched* today and over the last 120 days by each active person:
 ```sql
 SELECT COUNT(id) FROM Leads WHERE Modified_Time >= '<today 00:00, org timezone>' AND Tag = 'HarshSIR'
+SELECT COUNT(id) FROM Leads WHERE Modified_Time >= '<120 days ago 00:00, org timezone>' AND Tag = 'HarshSIR'
 SELECT COUNT(id) FROM Leads WHERE Modified_Time >= '<today 00:00, org timezone>' AND Tag = 'krisha'
+SELECT COUNT(id) FROM Leads WHERE Modified_Time >= '<120 days ago 00:00, org timezone>' AND Tag = 'krisha'
 ```
-This is a real Harsh/Krisha split, sourced from Zoho — use it as the base for the ops-by-person panel. It only covers Leads, though, so it's "leads each person touched today," not tasks or calls done — that part still isn't in Zoho (see the next step).
+This is a real Harsh/Krisha split, sourced from Zoho — use it as the base for the ops-by-person panel, with the 120-day figure as the headline and today's count as context. It only covers Leads, though, so it's "leads each person touched," not tasks or calls done — that part still isn't in Zoho (see the next step).
 
 **Deal/pipeline snapshot** (COQL has no `NOT IN` — use two `!=` clauses):
 ```sql
@@ -59,7 +62,7 @@ SELECT id, Deal_Name, Stage, Amount, Lead_Source, Campaign_Source, Owner, Closin
 FROM Deals
 WHERE Stage != 'Closed Won' AND Stage != 'Closed Lost'
 ```
-Aggregate into stage counts for a funnel view.
+Aggregate into stage counts for a funnel view. Open deals accumulate rather than reset daily, so this one doesn't need a 120-day filter — it's already "everything currently open."
 
 ### 2. Windsor.ai — marketing/ad performance
 
@@ -67,11 +70,11 @@ Connected accounts confirmed via `get_connectors`:
 - `facebook` — account id `5297469533670258` ("Upskill Overseas Education")
 - `google_ads` — account id `128-750-7158` ("Upskill Overseas Education | Best Student Visa Consultant...")
 
-Call `get_data` for both connectors, last 7 and last 30 days (`date_preset: "last_7dT"` / `"last_30dT"` — the trailing `T` includes today). Verified field IDs:
+Call `get_data` for both connectors with `date_preset: "last_120dT"` (the trailing `T` includes today) — this is the standard window, matching the 120-day rolling analysis period used everywhere else in this dashboard. Verified field IDs:
 - `facebook`: `date, spend, clicks, impressions, actions_leadgen_grouped, actions_lead, cost_per_action_type_leadgen_grouped`
 - `google_ads`: `date, spend, clicks, impressions, conversions`
 
-**Verified quirk — lead tracking is currently near-zero on both platforms.** As of this writing, `actions_leadgen_grouped`/`actions_lead` return 0 every day on the Facebook account (spend is real, ~₹400-900/day, but no lead-form actions are being tracked — the campaign may be running as engagement/messaging rather than lead-gen, based on the raw `actions` field showing messaging/engagement events instead), and Google Ads `conversions` also returns 0 every day despite real spend/clicks. Don't silently compute cost-per-lead as spend/0 — show spend, clicks, and cost-per-click as the reliable numbers, and surface leads/CPL as "0 tracked" rather than hiding the panel or dividing by zero. If this changes on a future run (leads start showing non-zero), CPL = spend / leads per platform per window.
+**Verified quirk — lead tracking looks empty on short windows but isn't, over 120 days.** On a 7-day window both platforms show 0 tracked leads/conversions despite real spend — that's real, not a bug (see below), but don't conclude from it that tracking is broken. Over the actual 120-day window: Facebook `actions_lead` = 15 (still `actions_leadgen_grouped` = 0 — leads are being tracked as a generic lead action, not the dedicated lead-gen action, so use `actions_lead` as the Facebook lead figure), and Google Ads `conversions` ≈ 5.3 (Google reports fractional attributed conversions — round for display but don't be alarmed by the decimal). CPL = spend / leads over the 120-day window: Facebook ≈ ₹4,600/lead, Google Ads ≈ ₹11,800/lead as of this writing. Both are real leads being missed on any window shorter than ~120 days simply because conversions/lead-gen events are sparse and lagged in this account — which is itself a reason the 120-day default matters here, not just a stylistic choice.
 
 ### 3. Gmail — inbox summary
 
@@ -93,10 +96,10 @@ The Lead `Tag` split above covers leads touched per person, but Tasks and Calls 
 ### 6. Render the dashboard
 
 Follow the `dataviz` and `artifact-design` skills for the visual pass. Publish as a single HTML Artifact with:
-- Stat tiles: leads today, tasks due today, calls today, unread emails
-- Marketing panel: spend, cost-per-lead, leads by platform (Facebook vs Google Ads), 7-day and 30-day toggle
-- Lead-source breakdown for today's leads
-- Ops-by-owner panel: Harsh vs Krisha leads touched today from the Lead `Tag` split (step 1), plus tasks/calls split from what Bansal gives conversationally in step 5 — org-wide Zoho task/call totals shown alongside as context
+- Stat tiles: leads today, follow-ups due today (Lead `Next_Call_date`, not the Tasks module — see quirk above), calls today, unread emails
+- Marketing panel: spend, cost-per-lead, leads by platform (Facebook vs Google Ads) over the 120-day window
+- Lead-source breakdown over the 120-day window (today's count shown as context, not the headline — see the short-window quirk above)
+- Ops-by-owner panel: Harsh vs Krisha leads touched, 120-day figure as the headline with today's count as context, from the Lead `Tag` split (step 1) — plus whatever task/call split Bansal gives conversationally in step 5, since Zoho has no Tag data on those modules
 - Deal pipeline funnel (stage counts)
 - Active Applications panel: cached B2B status + last-checked timestamp
 
