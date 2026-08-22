@@ -1,6 +1,15 @@
 {
   "last_checked": null,
-  "portal": null,
-  "applications": [],
-  "note": "Placeholder — populated by the every-2-days scheduled B2B portal check once portal login details are wired up. Until then the dashboard should show this as 'not yet checked' rather than empty/zero."
+  "portals_checked": [],
+  "applications": [
+    {
+      "_schema_note": "One entry per active application. student/portal/stage/is_visitor_visa are the fields the dashboard actually reads — fill real ones in below and delete this placeholder object.",
+      "student": null,
+      "portal": null,
+      "stage": null,
+      "is_visitor_visa": false,
+      "last_updated": null
+    }
+  ],
+  "note": "Placeholder — populated by the every-2-days manual B2B portal check (b2b-portal-check.md) and/or whatever Bansal shares directly in a dashboard-run conversation. Until real entries exist, the dashboard should show this as 'not yet checked' rather than empty/zero."
 }
