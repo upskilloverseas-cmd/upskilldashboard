@@ -31,29 +31,28 @@ ORDER BY Created_Time desc
 ```
 (Note the `Next_Call_date` field from the lead-audit skill is lowercase "d" if you need to reference it here too.)
 
-**Tasks due today**, filtered to Harsh and Krisha:
+**Tasks due today**:
 ```sql
 SELECT id, Subject, Due_Date, Status, Priority, Owner, What_Id, Who_Id
 FROM Tasks
 WHERE Due_Date = '<today, org timezone>' AND Status != 'Completed'
-ORDER BY Owner asc
 ```
-Then group by `Owner.name` for the ops-by-owner panel. If `Owner` isn't filterable directly by name in COQL, pull the day's tasks and group client-side.
 
-**Calls logged today**, filtered to Harsh and Krisha:
+**Calls logged today**:
 ```sql
 SELECT id, Subject, Call_Start_Time, Call_Duration, Call_Type, Call_Purpose, Call_Result, Owner, What_Id, Who_Id
 FROM Calls
 WHERE Call_Start_Time >= '<today 00:00, org timezone>'
 ORDER BY Call_Start_Time desc
 ```
-Group by `Owner.name`; surface count + total duration per owner.
 
-**Deal/pipeline snapshot**:
+> **Verified quirk — no per-person breakdown from Zoho.** This org has exactly one Zoho CRM user (the shared admin login, `Upskill Overseas` / `aayushhishah@upskilloverseas.in` — confirmed via `getUsers`). Every Lead/Task/Call/Deal shows that same single `Owner`, and COQL returns `Owner.name` as `null` regardless. Harsh and Krisha are **not** distinguishable in Zoho data at all — there is no Owner-based split to compute. Don't attempt one; the "Ops data outside Zoho" step below is where the Harsh/Krisha split actually comes from, for the *entire* ops panel, not just the part that's "outside Zoho."
+
+**Deal/pipeline snapshot** (COQL has no `NOT IN` — use two `!=` clauses):
 ```sql
 SELECT id, Deal_Name, Stage, Amount, Lead_Source, Campaign_Source, Owner, Closing_Date
 FROM Deals
-WHERE Stage NOT IN ('Closed Won', 'Closed Lost')
+WHERE Stage != 'Closed Won' AND Stage != 'Closed Lost'
 ```
 Aggregate into stage counts for a funnel view.
 
@@ -63,11 +62,15 @@ Connected accounts confirmed via `get_connectors`:
 - `facebook` — account id `5297469533670258` ("Upskill Overseas Education")
 - `google_ads` — account id `128-750-7158` ("Upskill Overseas Education | Best Student Visa Consultant...")
 
-Call `get_data` for both connectors, last 7 and last 30 days, pulling at minimum: spend, impressions, clicks, leads/conversions. Compute cost-per-lead (spend / leads) per platform per window. If `get_data` needs a `fields` list, call `get_fields` first for each connector to confirm exact field ids rather than guessing.
+Call `get_data` for both connectors, last 7 and last 30 days (`date_preset: "last_7dT"` / `"last_30dT"` — the trailing `T` includes today). Verified field IDs:
+- `facebook`: `date, spend, clicks, impressions, actions_leadgen_grouped, actions_lead, cost_per_action_type_leadgen_grouped`
+- `google_ads`: `date, spend, clicks, impressions, conversions`
+
+**Verified quirk — lead tracking is currently near-zero on both platforms.** As of this writing, `actions_leadgen_grouped`/`actions_lead` return 0 every day on the Facebook account (spend is real, ~₹400-900/day, but no lead-form actions are being tracked — the campaign may be running as engagement/messaging rather than lead-gen, based on the raw `actions` field showing messaging/engagement events instead), and Google Ads `conversions` also returns 0 every day despite real spend/clicks. Don't silently compute cost-per-lead as spend/0 — show spend, clicks, and cost-per-click as the reliable numbers, and surface leads/CPL as "0 tracked" rather than hiding the panel or dividing by zero. If this changes on a future run (leads start showing non-zero), CPL = spend / leads per platform per window.
 
 ### 3. Gmail — inbox summary
 
-Use `search_threads` (or label counts via `list_labels`) for a lightweight inbox summary: unread count, and recent threads relevant to leads/applications (search for relevant keywords/senders if Bansal has a known applications-inbox pattern). This call errored transiently once during setup — retry once on failure; if it still fails, note "Gmail summary unavailable this run" in the dashboard rather than blocking the whole run.
+Call `list_labels` for the unread/total counts on `INBOX` and `IMPORTANT` (verified working — confirmed a large backlog: thousands of unread messages, so lead with unread *change since last run* if tracked, not just the raw total, since the raw total will always look alarming). Use `search_threads` for anything more targeted (e.g. BitTRACK correspondence, per `b2b-portal-check.md`). `list_labels` errored transiently once during setup — retry once on failure; if it still fails, note "Gmail summary unavailable this run" rather than blocking the whole dashboard.
 
 ### 4. Active B2B-portal applications — read the cache, don't log in live
 
@@ -78,9 +81,9 @@ On a dashboard run in *this* environment:
 - Show its `last_checked` timestamp prominently next to the panel — if it's stale (no update in the last ~4 days), flag that visibly rather than presenting it as current, and remind Bansal it's due for a manual check.
 - Do **not** attempt a browser login here — this session doesn't have the tools for it.
 
-### 5. Ops data outside Zoho
+### 5. Ops data outside Zoho — this is also where the Harsh/Krisha split comes from
 
-Some of what Harsh/Krisha handle for "processing" isn't in Zoho. Ask Bansal conversationally at the start of the run ("anything on the processing side outside Zoho I should fold in today?") rather than presenting the Zoho-only tasks/calls numbers as if they were the whole picture. If he has nothing to add, proceed with Zoho data alone.
+Zoho has no per-user Owner data (see the quirk above) and some of what Harsh/Krisha handle for "processing" isn't in Zoho at all. So ask Bansal conversationally at the start of the run ("what's the Harsh/Krisha split today, and anything on the processing side outside Zoho I should fold in?") rather than presenting the Zoho-only tasks/calls totals as if they were already broken down by person. If he has nothing to add, show the Zoho numbers as org-wide totals rather than guessing a split.
 
 ### 6. Render the dashboard
 
@@ -88,7 +91,7 @@ Follow the `dataviz` and `artifact-design` skills for the visual pass. Publish a
 - Stat tiles: leads today, tasks due today, calls today, unread emails
 - Marketing panel: spend, cost-per-lead, leads by platform (Facebook vs Google Ads), 7-day and 30-day toggle
 - Lead-source breakdown for today's leads
-- Ops-by-owner panel: Harsh vs Krisha — tasks due, calls made/duration, plus whatever Bansal added conversationally in step 5
+- Ops-by-owner panel: Harsh vs Krisha, sourced from what Bansal gives conversationally in step 5 (Zoho itself can't split this) — org-wide Zoho totals shown alongside as context
 - Deal pipeline funnel (stage counts)
 - Active Applications panel: cached B2B status + last-checked timestamp
 
