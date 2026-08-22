@@ -71,10 +71,12 @@ Use `search_threads` (or label counts via `list_labels`) for a lightweight inbox
 
 ### 4. Active B2B-portal applications — read the cache, don't log in live
 
-A separate scheduled trigger (see below) logs into the B2B portal(s) every 2 days and writes results to `data/b2b-applications.json` in this repo. On a dashboard run:
+The B2B partner portals (KC Overseas, Crizac, SI/StudyIn, Leverage Edu, BitTRACK) have no API and no MCP connector, and reading them requires the "Claude in Chrome" browser-control tools (click by coordinate, screenshot, page text) that only exist in a **desktop Claude Code session** — this cloud/on-demand session does not have them, and there's no way to run that login flow unattended on a schedule here. So this piece is intentionally **manual**: Bansal runs the check himself from a desktop Claude Code session every couple of days, following `b2b-portal-check.md` in this same skill folder, and that session overwrites `data/b2b-applications.json` with the new snapshot.
+
+On a dashboard run in *this* environment:
 - Read that file.
-- Show its `last_checked` timestamp prominently next to the panel — if it's more than ~3 days stale, flag that visibly (the schedule may have failed) rather than presenting it as current.
-- Do **not** perform a fresh browser login on a normal dashboard run — that's what the every-2-days schedule is for.
+- Show its `last_checked` timestamp prominently next to the panel — if it's stale (no update in the last ~4 days), flag that visibly rather than presenting it as current, and remind Bansal it's due for a manual check.
+- Do **not** attempt a browser login here — this session doesn't have the tools for it.
 
 ### 5. Ops data outside Zoho
 
@@ -94,6 +96,6 @@ Redeploy to the same Artifact URL on every run (don't create a new artifact each
 
 If the request is conversational rather than asking to "see" a dashboard, a plain-text summary of the same numbers is fine — read the room.
 
-## Scheduled B2B portal check (separate from this workflow)
+## Manual B2B portal check (separate from this workflow, desktop session only)
 
-A `create_trigger` cron routine, firing every 2 days, drives a Playwright browser session (pre-installed Chromium) that logs into the portal(s) per the login steps Bansal provided, reads each active application's status, and overwrites `data/b2b-applications.json` with the new snapshot + `last_checked` timestamp. That routine's prompt — not this SKILL.md — is where any login-flow specifics or credential references live, since this file is committed to git and shouldn't carry secrets.
+See `b2b-portal-check.md` in this folder for the per-portal login/navigation steps. Run it from a desktop Claude Code session with the Chrome extension attached, roughly every 2 days. It writes its results to `data/b2b-applications.json`, which this dashboard workflow then reads. Credentials are never stored in this repo — `b2b-portal-check.md` points to where they live instead.
